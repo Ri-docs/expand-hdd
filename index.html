@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RapidIdentity Appliance Disk Expansion Guide</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+  <body class="bg-gray-50 text-gray-800 antialiased">
+    <!--==============  HEADER  ==============-->
+    <header class="bg-sky-700 text-white shadow">
+      <div class="max-w-7xl mx-auto flex items-center justify-between px-4 py-6">
+        <h1 class="text-2xl font-semibold tracking-wide">
+          RapidIdentity Disk Expansion Cheat Sheet
+        </h1>
+        <nav class="hidden md:flex space-x-6 text-sm font-medium">
+          <a href="#precheck" class="hover:underline">Pre‑Check</a>
+          <a href="#partition" class="hover:underline">Partition</a>
+          <a href="#pv" class="hover:underline">Physical&nbsp;Volume</a>
+          <a href="#vg" class="hover:underline">Volume&nbsp;Group</a>
+          <a href="#lv" class="hover:underline">Logical&nbsp;Volume</a>
+          <a href="#fs" class="hover:underline">Grow&nbsp;FS</a>
+          <a href="#validation" class="hover:underline">Validation</a>
+          <a href="#troubleshooting" class="hover:underline">Troubleshooting</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="max-w-4xl mx-auto px-4 py-12 space-y-20">
+      <!--==============  PRE‑CHECK  ==============-->
+      <section id="precheck" class="space-y-6">
+        <h2 class="text-xl font-semibold text-sky-700 flex items-center">
+          <span class="mr-2">0.</span> Pre‑Check
+        </h2>
+        <ol class="list-decimal list-inside space-y-2 pl-4">
+          <li>Ask the customer to add space to the VM – either increase the size of the primary disk or attach a new one.</li>
+          <li>Confirm free space and mount points:
+            <pre class="bg-gray-100 p-2 rounded text-sm"><code>df -h</code></pre>
+            If the root filesystem is nearly full, clean up logs first so the appliance does not flip to read‑only during the resize.
+          </li>
+          <li>If unsure which device changed, list block devices:
+            <pre class="bg-gray-100 p-2 rounded text-sm"><code>lsblk</code></pre>
+          </li>
+        </ol>
+      </section>
+
+      <!--==============  PARTITION  ==============-->
+      <section id="partition" class="space-y-6">
+        <h2 class="text-xl font-semibold text-sky-700 flex items-center">
+          <span class="mr-2">1.</span> Create a Partition
+        </h2>
+        <ol class="list-decimal list-inside space-y-3 pl-4">
+          <li>Identify the correct disk (usually <code>/dev/sda</code> if the original disk was extended, or <code>/dev/sdb</code> for a second disk):
+            <pre class="bg-gray-100 p-2 rounded text-sm"><code>fdisk -l</code></pre>
+          </li>
+          <li>Start <code>fdisk</code> on that device and add a primary partition of type <code>8e</code> (Linux LVM):
+            <pre class="bg-gray-100 p-2 rounded text-sm whitespace-pre-wrap"><code>fdisk /dev/sdX   # replace X with a or b
+p                # print table
+n                # new partition
+p                # primary
+<next number>     # use next free partition number
+<enter>           # default first cylinder
+<enter>           # default last cylinder
+t                # change type
+<partition number>
+8e               # Linux LVM
+w                # write table and quit</code></pre>
+          </li>
+          <li>Reboot so the kernel detects the new partition table.</li>
+        </ol>
+      </section>
+
+      <!--==============  PHYSICAL VOLUME  ==============-->
+      <section id="pv" class="space-y-6">
+        <h2 class="text-xl font-semibold text-sky-700 flex items-center">
+          <span class="mr-2">2.</span> Add Physical Volume
+        </h2>
+        <ol class="list-decimal list-inside space-y-3 pl-4">
+          <li>Create the physical volume on the new partition:
+            <pre class="bg-gray-100 p-2 rounded text-sm"><code>pvcreate /dev/sdXX</code></pre>
+          </li>
+          <li>Verify:
+            <pre class="bg-gray-100 p-2 rounded text-sm"><code>pvdisplay</code></pre>
+          </li>
+        </ol>
+      </section>
+
+      <!--==============  VOLUME GROUP  ==============-->
+      <section id="vg" class="space-y-6">
+        <h2 class="text-xl font-semibold text-sky-700 flex items-center">
+          <span class="mr-2">3.</span> Extend Volume Group
+        </h2>
+        <ol class="list-decimal list-inside space-y-3 pl-4">
+          <li>Find the volume group name (CentOS default is <code>centos</code>):
+            <pre class="bg-gray-100 p-2 rounded text-sm"><code>vgdisplay</code></pre>
+          </li>
+          <li>Add the new PV:
+            <pre class="bg-gray-100 p-2 rounded text-sm"><code>vgextend centos /dev/sdXX</code></pre>
+          </li>
+          <li>Confirm free space now exists in the VG.
+          </li>
+        </ol>
+      </section>
+
+      <!--==============  LOGICAL VOLUME  ==============-->
+      <section id="lv" class="space-y-6">
+        <h2 class="text-xl font-semibold text-sky-700 flex items-center">
+          <span class="mr-2">4.</span> Resize Logical Volume
+        </h2>
+        <ol class="list-decimal list-inside space-y-3 pl-4">
+          <li>Show current LV size:
+            <pre class="bg-gray-100 p-2 rounded text-sm"><code>lvdisplay</code></pre>
+          </li>
+          <li>Grow the root LV using all free extents:
+            <pre class="bg-gray-100 p-2 rounded text-sm"><code>lvextend --extents +100%FREE /dev/centos/root</code></pre>
+          </li>
+          <li>Verify the LV reflects the new size.
+          </li>
+        </ol>
+      </section>
+
+      <!--==============  FILESYSTEM  ==============-->
+      <section id="fs" class="space-y-6">
+        <h2 class="text-xl font-semibold text-sky-700 flex items-center">
+          <span class="mr-2">5.</span> Grow Filesystem
+        </h2>
+        <ol class="list-decimal list-inside space-y-3 pl-4">
+          <li>Expand the XFS root filesystem online:
+            <pre class="bg-gray-100 p-2 rounded text-sm"><code>xfs_growfs /dev/centos/root</code></pre>
+          </li>
+          <li>Run <code>df -h</code> again to confirm the new size is available.
+          </li>
+        </ol>
+      </section>
+
+      <!--==============  VALIDATION  ==============-->
+      <section id="validation" class="space-y-6">
+        <h2 class="text-xl font-semibold text-sky-700 flex items-center">
+          <span class="mr-2">6.</span> Validation
+        </h2>
+        <ol class="list-decimal list-inside space-y-2 pl-4">
+          <li>Check RapidIdentity UI loads without errors.</li>
+          <li>Monitor <code>/var/log/messages</code> for LVM or XFS warnings.</li>
+          <li>Reboot once more and verify the expanded filesystem persists.</li>
+        </ol>
+      </section>
+
+      <!--==============  TROUBLESHOOTING  ==============-->
+      <section id="troubleshooting" class="space-y-6 pb-16">
+        <h2 class="text-xl font-semibold text-sky-700 flex items-center">
+          <span class="mr-2">7.</span> Troubleshooting & Quick Commands
+        </h2>
+        <div class="grid md:grid-cols-2 gap-8">
+          <div>
+            <h3 class="font-semibold mb-2">Common Issues</h3>
+            <ul class="list-disc list-inside space-y-2">
+              <li><strong>Partition table not detected</strong> – reboot after writing changes with <code>fdisk</code>.</li>
+              <li><strong>pvcreate fails</strong> – confirm the partition type is <code>8e</code>.</li>
+              <li><strong>lvextend says no free extents</strong> – ensure <code>vgextend</code> ran on the correct VG.</li>
+              <li><strong>xfs_growfs: cannot enlarge</strong> – LV did not grow; re‑check <code>lvdisplay</code>.</li>
+            </ul>
+          </div>
+          <div>
+            <h3 class="font-semibold mb-2">Cheat‑Sheet Commands</h3>
+            <pre class="bg-gray-100 p-3 rounded text-sm whitespace-pre-wrap"><code># View space
+ df -h
+
+# List block devices
+ lsblk
+
+# Create PV, extend VG, extend LV
+ pvcreate /dev/sdXX
+ vgextend centos /dev/sdXX
+ lvextend --extents +100%FREE /dev/centos/root
+
+# Grow filesystem
+ xfs_growfs /dev/centos/root
+
+# Verify
+ df -h</code></pre>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!--==============  FOOTER  ==============-->
+    <footer class="bg-sky-700 text-white text-sm py-4">
+      <div class="max-w-7xl mx-auto px-4 text-center">
+        RapidIdentity Disk Expansion Guide
+      </div>
+    </footer>
+  </body>
+</html>
