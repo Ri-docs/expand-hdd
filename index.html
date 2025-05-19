@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>RapidIdentity Appliance Disk Expansion Guide</title>
+    <title>RapidIdentity Disk Expansion Cheat Sheet</title>
     <script src="https://cdn.tailwindcss.com"></script>
   </head>
   <body class="bg-gray-50 text-gray-800 antialiased">
@@ -20,7 +20,7 @@
           <a href="#vg" class="hover:underline">Volume&nbsp;Group</a>
           <a href="#lv" class="hover:underline">Logical&nbsp;Volume</a>
           <a href="#fs" class="hover:underline">Grow&nbsp;FS</a>
-          <a href="#validation" class="hover:underline">Validation</a>
+          <a href="#confirmation" class="hover:underline">Confirmation</a>
           <a href="#troubleshooting" class="hover:underline">Troubleshooting</a>
         </nav>
       </div>
@@ -30,12 +30,12 @@
       <!--==============  PRE-CHECK  ==============-->
       <section id="precheck" class="space-y-6">
         <h2 class="text-xl font-semibold text-sky-700 flex items-center">
-          <span class="mr-2">0.</span> Pre‑Check
+          <span class="mr-2">0.</span> Pre-Check
         </h2>
         <ol class="list-decimal list-inside space-y-2 pl-4">
-          <li>Have the virtualization admin extend the virtual disk (or attach a new one). A good rule of thumb is to <strong>double</strong> the current size unless the disk is already hundreds of GB.</li>
-          <li>Review RapidIdentity <strong>Security → Retention Policies</strong>. Switch any non‑essential logs from <em>Always Retain</em> to <em>Inherit</em> (default 7 days) so the appliance does not quickly outgrow the new space.</li>
-          <li>Confirm you are on the correct appliance (e.g., DB node) by checking its IP with:
+          <li>Ask the virtualization admin to extend the virtual disk (or attach a new one). A simple rule of thumb is to <strong>double</strong> the current size unless the disk is already very large.</li>
+          <li>Open RapidIdentity <strong>Security - Retention Policies</strong>. Switch any logs that do not need long‑term storage from <em>Always Retain</em> to <em>Inherit</em> (defaults to 7 days) so the appliance does not fill up again too quickly.</li>
+          <li>Confirm you are on the correct appliance (for example the DB node) and record its IP:
             <pre class="bg-gray-100 p-2 rounded text-sm"><code>ifconfig | grep inet</code></pre>
           </li>
           <li>Check current usage and mounts:
@@ -56,22 +56,21 @@
           <li>If <code>lsblk</code> does not yet reflect the larger size, rescan the SCSI bus (no reboot needed):
             <pre class="bg-gray-100 p-2 rounded text-sm"><code># replace sda with the correct device if different
 echo 1 > /sys/class/block/sda/device/rescan</code></pre>
-            Re‑run <code>lsblk</code> to confirm the new size is detected.
+            Run <code>lsblk</code> again to confirm the new size is detected.
           </li>
-          <li>Identify the target disk (usually <code>/dev/sda</code>). Launch <code>fdisk</code> and add a new <em>primary</em> partition of type <code>8e</code> (Linux LVM):
+          <li>Identify the disk (usually <code>/dev/sda</code>). Launch <code>fdisk</code> and add a new <em>primary</em> partition of type <code>8e</code> (Linux LVM):
             <pre class="bg-gray-100 p-2 rounded text-sm whitespace-pre-wrap"><code>fdisk /dev/sdX   # replace X with a or b
 n  # new partition
 p  # primary
-<next number>     # next free partition number
-<enter>           # default first sector
-<enter>           # default last sector (use full space)
+&lt;next number&gt;     # next free number
+&lt;enter&gt;           # default first sector
+&lt;enter&gt;           # default last sector (use the rest)
 t  # change type
-<partition number>
+&lt;partition number&gt;
 8e # Linux LVM
-w  # write & quit</code></pre>
-            If <code>fdisk</code> warns "no free sectors available," the hypervisor resize was not detected; rescan or reboot and try again.
+w  # write and quit</code></pre>
           </li>
-          <li>Run <code>partprobe</code> to notify the kernel of the new table (older kernels may still require a reboot).</li>
+          <li>Run <code>partprobe</code> so the kernel sees the new table (older kernels may still need a reboot).</li>
         </ol>
       </section>
 
@@ -84,7 +83,7 @@ w  # write & quit</code></pre>
           <li>Create the PV:
             <pre class="bg-gray-100 p-2 rounded text-sm"><code>pvcreate /dev/sdXX</code></pre>
           </li>
-          <li>Verify with:
+          <li>Verify it:
             <pre class="bg-gray-100 p-2 rounded text-sm"><code>pvdisplay</code></pre>
           </li>
         </ol>
@@ -129,19 +128,21 @@ w  # write & quit</code></pre>
           <li>Expand XFS online:
             <pre class="bg-gray-100 p-2 rounded text-sm"><code>xfs_growfs /dev/centos/root</code></pre>
           </li>
-          <li>Confirm with <code>df -h</code>.</li>
+          <li>Verify:
+            <pre class="bg-gray-100 p-2 rounded text-sm"><code>df -h /</code></pre>
+          </li>
         </ol>
       </section>
 
-      <!--==============  VALIDATION  ==============-->
-      <section id="validation" class="space-y-6">
+      <!--==============  CONFIRMATION  ==============-->
+      <section id="confirmation" class="space-y-6">
         <h2 class="text-xl font-semibold text-sky-700 flex items-center">
-          <span class="mr-2">6.</span> Validation
+          <span class="mr-2">6.</span> Confirmation
         </h2>
         <ol class="list-decimal list-inside space-y-2 pl-4">
-          <li>Load RapidIdentity UI – ensure normal login and workflows.</li>
-          <li>Tail <code>/var/log/messages</code> for LVM/XFS warnings.</li>
-          <li>Schedule a reboot during a maintenance window and re‑run <code>df -h</code> afterwards.</li>
+          <li>Log in to RapidIdentity and confirm normal operation.</li>
+          <li>Tail <code>/var/log/messages</code> for any LVM or XFS warnings.</li>
+          <li>Schedule a reboot during a maintenance window and re‑run <code>df -h</code> to verify the size persists.</li>
         </ol>
       </section>
 
@@ -151,19 +152,21 @@ w  # write & quit</code></pre>
           <span class="mr-2">7.</span> Troubleshooting & Quick Commands
         </h2>
         <div class="grid md:grid-cols-2 gap-8">
+          <!-- Common Issues -->
           <div>
             <h3 class="font-semibold mb-2">Common Issues</h3>
             <ul class="list-disc list-inside space-y-2 text-sm">
-              <li><strong>Hypervisor resized but OS does not see it</strong> – run <code>echo 1 > /sys/class/block/sdX/device/rescan</code> or reboot.</li>
-              <li><strong>fdisk says "No free sectors available"</strong> – resize not detected (see above rescan).</li>
-              <li><strong>pvcreate fails</strong> – ensure the partition type is <code>8e</code>.</li>
-              <li><strong>lvextend: No free extents</strong> – confirm <code>vgextend</code> was successful.</li>
-              <li><strong>xfs_growfs cannot enlarge</strong> – LV did not grow.</li>
+              <li><strong>Hypervisor resized but OS does not see it</strong> - run <code>echo 1 > /sys/class/block/sdX/device/rescan</code> or reboot.</li>
+              <li><strong>fdisk says "No free sectors available"</strong> - resize not detected (see rescan).</li>
+              <li><strong>pvcreate fails</strong> - make sure the new partition type is <code>8e</code>.</li>
+              <li><strong>lvextend: No free extents</strong> - confirm <code>vgextend</code> completed.</li>
+              <li><strong>xfs_growfs cannot enlarge</strong> - LV did not grow correctly.</li>
             </ul>
           </div>
+          <!-- Cheat Sheet Commands -->
           <div>
             <h3 class="font-semibold mb-2">Cheat‑Sheet Commands</h3>
-            <pre class="bg-gray-100 p-3 rounded text-sm whitespace-pre-wrap"><code># Verify appliance & space
+            <pre class="bg-gray-100 p-3 rounded text-sm whitespace-pre-wrap"><code># Verify appliance and space
 ifconfig | grep inet
 df -h
 lsblk
