@@ -1,199 +1,316 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>RapidIdentity Disk Expansion Cheat Sheet</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-  </head>
-  <body class="bg-gray-50 text-gray-800 antialiased">
-    <!--==============  HEADER  ==============-->
-    <header class="bg-sky-700 text-white shadow">
-      <div class="max-w-7xl mx-auto flex items-center justify-between px-4 py-6">
-        <h1 class="text-2xl font-semibold tracking-wide">
-          RapidIdentity Disk Expansion Cheat Sheet
-        </h1>
-        <nav class="hidden md:flex space-x-6 text-sm font-medium">
-          <a href="#precheck" class="hover:underline">Pre-Check</a>
-          <a href="#partition" class="hover:underline">Partition</a>
-          <a href="#pv" class="hover:underline">Physical&nbsp;Volume</a>
-          <a href="#vg" class="hover:underline">Volume&nbsp;Group</a>
-          <a href="#lv" class="hover:underline">Logical&nbsp;Volume</a>
-          <a href="#fs" class="hover:underline">Grow&nbsp;FS</a>
-          <a href="#confirmation" class="hover:underline">Confirmation</a>
-          <a href="#troubleshooting" class="hover:underline">Troubleshooting</a>
-        </nav>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RapidIdentity Root Filesystem Expansion</title>
+  <style>
+    body {
+      margin: 0;
+      background: #ffffff;
+      color: #111111;
+      font-family: Arial, Helvetica, sans-serif;
+      line-height: 1.5;
+    }
+
+    .page {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 36px 28px 48px;
+    }
+
+    h1 {
+      font-size: 24px;
+      margin: 0 0 18px;
+      font-weight: 700;
+    }
+
+    h2 {
+      font-size: 18px;
+      margin: 28px 0 12px;
+      font-weight: 700;
+    }
+
+    p {
+      margin: 8px 0;
+    }
+
+    ol, ul {
+      margin: 8px 0 14px 22px;
+    }
+
+    li {
+      margin: 6px 0;
+    }
+
+    .note {
+      margin: 12px 0;
+      padding: 10px 12px;
+      border: 1px solid #d9d9d9;
+      background: #fafafa;
+    }
+
+    pre {
+      margin: 10px 0 16px;
+      padding: 12px;
+      border: 1px solid #d9d9d9;
+      background: #f7f7f7;
+      overflow-x: auto;
+    }
+
+    code {
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 13px;
+      white-space: pre;
+    }
+
+    .section {
+      margin-bottom: 26px;
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1>RapidIdentity Root Filesystem Expansion</h1>
+
+    <p>
+      Use this procedure to add approved capacity to the root filesystem of a CentOS-style RapidIdentity appliance. It covers an XFS root filesystem on LVM, using either free space already present in the root volume group or new capacity added to the appliance's existing virtual disk.
+    </p>
+
+    <div class="note">
+      For an on-premises appliance, the customer or infrastructure owner confirms the recovery point and changes the virtual disk; Support performs the approved technician-mode partition and LVM work. Confirm the maintenance window, console access, validated backup or snapshot, and rollback owner before changing storage. Route hosted or cloud infrastructure changes through DevOps.
+    </div>
+
+    <div class="note">
+      Device names in this guide are placeholders. Do not assume that the disk is <code>/dev/sda</code>, the new partition is <code>/dev/sda4</code>, the volume group is <code>centos</code>, or the root logical volume is <code>/dev/centos/root</code>.
+    </div>
+
+    <div class="section">
+      <h2>1. Decide whether expansion is the right action</h2>
+
+      <ol>
+        <li>Confirm which appliance is full and record its role, such as DB, DSS/Connect, Portal/ARMS, or another module-specific node.</li>
+        <li>Confirm that <code>/</code> is the filesystem that needs capacity, then identify the largest top-level path.</li>
+      </ol>
+
+      <pre><code>df -h /
+du -x -h --max-depth=1 / | sort -h</code></pre>
+
+      <ol start="3">
+        <li>Drill into the largest path until the source is understood. Accumulated or failed database backups, RapidIdentity logs, Connect logs, and database or audit growth are common possibilities, but none should be assumed without checking.</li>
+        <li>If the root filesystem is already full and PostgreSQL or RapidIdentity will not start, first free only enough known-safe space for the appliance to operate. Typical candidates are confirmed expired or failed backup archives and the oldest rotated or compressed logs.</li>
+        <li>Do not delete PostgreSQL data files, WAL files, arbitrary files under <code>/var/lib/pgsql*</code>, or database tables to make room.</li>
+        <li>Continue with expansion when cleanup would provide only temporary relief or the approved capacity change requires a larger filesystem.</li>
+      </ol>
+    </div>
+
+    <div class="section">
+      <h2>2. Record the current appliance and storage layout</h2>
+
+      <ol>
+        <li>Confirm that you are connected to the intended appliance.</li>
+      </ol>
+
+      <pre><code>hostname
+ip addr</code></pre>
+
+      <ol start="2">
+        <li>Capture the current filesystem, disk, LVM, and root-mount details.</li>
+      </ol>
+
+      <pre><code>df -h
+lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT
+pvs
+vgs
+lvs
+findmnt -no SOURCE,FSTYPE /</code></pre>
+
+      <ol start="3">
+        <li>Write down the actual disk, new partition path, volume group, root logical volume, root mount point, and filesystem type that the outputs identify.</li>
+        <li>Confirm that the root filesystem is on LVM and that its filesystem type is <code>xfs</code>. If either condition is false, stop and use the procedure approved for that layout.</li>
+        <li>If the appliance hosts the local database, confirm that a recent independent database backup and a VM snapshot or equivalent rollback point exist.</li>
+        <li>Check the root volume group's free space in <code>vgs</code>. If it already contains enough approved free space, do not modify the disk, partition table, physical volumes, or volume group. Skip to section 6 and extend the root logical volume.</li>
+        <li>If the root volume group does not contain enough free space, confirm that the infrastructure owner has enlarged the correct existing virtual disk by the approved amount before continuing.</li>
+      </ol>
+    </div>
+
+    <div class="section">
+      <h2>3. Make the added capacity visible to Linux</h2>
+
+      <ol>
+        <li>Run <code>lsblk</code> and compare the device size with the approved infrastructure change.</li>
+        <li>If an expanded SCSI disk does not show its new size, rescan that specific device. Replace <code>sdX</code> with the disk confirmed in the previous step.</li>
+      </ol>
+
+      <pre><code>echo 1 &gt; /sys/class/block/sdX/device/rescan
+lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT</code></pre>
+
+      <ol start="3">
+        <li>If the new size still is not visible, stop. Coordinate an approved reboot or have the infrastructure owner correct the virtual-disk change.</li>
+        <li>Inspect the correct disk and its partition table before making a change.</li>
+      </ol>
+
+      <pre><code>fdisk -l /dev/sdX</code></pre>
+
+      <div class="note">
+        The partition steps below describe the classic DOS/MBR layout used by older CentOS-style appliances. If the disk uses GPT, has no free partition entry, exceeds the supported MBR range, or has a nonstandard layout, stop and use the current approved partitioning method for that system.
       </div>
-    </header>
+    </div>
 
-    <main class="max-w-4xl mx-auto px-4 py-12 space-y-20">
-      <!--==============  PRE-CHECK  ==============-->
-      <section id="precheck" class="space-y-6">
-        <h2 class="text-xl font-semibold text-sky-700 flex items-center">
-          <span class="mr-2">0.</span> Pre-Check
-        </h2>
-        <ol class="list-decimal list-inside space-y-2 pl-4">
-          <li>Ask the virtualization admin to extend the virtual disk (or attach a new one). A simple rule of thumb is to <strong>double</strong> the current size unless the disk is already very large.</li>
-          <li>Open RapidIdentity <strong>Security - Retention Policies</strong>. Switch any logs that do not need long‑term storage from <em>Always Retain</em> to <em>Inherit</em> (defaults to 7 days) so the appliance does not fill up again too quickly.</li>
-          <li>Confirm you are on the correct appliance (for example the DB node) and record its IP:
-            <pre class="bg-gray-100 p-2 rounded text-sm"><code>ifconfig | grep inet</code></pre>
-          </li>
-          <li>Check current usage and mounts:
-            <pre class="bg-gray-100 p-2 rounded text-sm"><code>df -h</code></pre>
-          </li>
-          <li>List block devices and sizes (verify the hypervisor change is visible):
-            <pre class="bg-gray-100 p-2 rounded text-sm"><code>lsblk</code></pre>
-          </li>
-        </ol>
-      </section>
+    <div class="section">
+      <h2>4. Create a new LVM partition</h2>
 
-      <!--==============  PARTITION  ==============-->
-      <section id="partition" class="space-y-6">
-        <h2 class="text-xl font-semibold text-sky-700 flex items-center">
-          <span class="mr-2">1.</span> Create a Partition
-        </h2>
-        <ol class="list-decimal list-inside space-y-3 pl-4">
-          <li>If <code>lsblk</code> does not yet reflect the larger size, rescan the SCSI bus (no reboot needed):
-            <pre class="bg-gray-100 p-2 rounded text-sm"><code># replace sda with the correct device if different
-echo 1 > /sys/class/block/sda/device/rescan</code></pre>
-            Run <code>lsblk</code> again to confirm the new size is detected.
-          </li>
-          <li>Identify the disk (usually <code>/dev/sda</code>). Launch <code>fdisk</code> and add a new <em>primary</em> partition of type <code>8e</code> (Linux LVM):
-            <pre class="bg-gray-100 p-2 rounded text-sm whitespace-pre-wrap"><code>fdisk /dev/sdX   # replace X with a or b
-n  # new partition
-p  # primary
-&lt;next number&gt;     # next free number
-&lt;enter&gt;           # default first sector
-&lt;enter&gt;           # default last sector (use the rest)
-t  # change type
-&lt;partition number&gt;
-8e # Linux LVM
-w  # write and quit</code></pre>
-          </li>
-          <li>Run <code>partprobe</code> so the kernel sees the new table (older kernels may still need a reboot).</li>
-        </ol>
-      </section>
+      <ol>
+        <li>Open the disk confirmed in the previous section. The new partition must use only the capacity added to that disk. Do not delete or recreate an existing partition.</li>
+      </ol>
 
-      <!--==============  PHYSICAL VOLUME  ==============-->
-      <section id="pv" class="space-y-6">
-        <h2 class="text-xl font-semibold text-sky-700 flex items-center">
-          <span class="mr-2">2.</span> Add Physical Volume
-        </h2>
-        <ol class="list-decimal list-inside space-y-3 pl-4">
-          <li>Create the PV:
-            <pre class="bg-gray-100 p-2 rounded text-sm"><code>pvcreate /dev/sdXX</code></pre>
-          </li>
-          <li>Verify it:
-            <pre class="bg-gray-100 p-2 rounded text-sm"><code>pvdisplay</code></pre>
-          </li>
-        </ol>
-      </section>
+      <pre><code>fdisk /dev/sdX</code></pre>
 
-      <!--==============  VOLUME GROUP  ==============-->
-      <section id="vg" class="space-y-6">
-        <h2 class="text-xl font-semibold text-sky-700 flex items-center">
-          <span class="mr-2">3.</span> Extend Volume Group
-        </h2>
-        <ol class="list-decimal list-inside space-y-3 pl-4">
-          <li>Find the VG (CentOS default is <code>centos</code>):
-            <pre class="bg-gray-100 p-2 rounded text-sm"><code>vgdisplay</code></pre>
-          </li>
-          <li>Add the new PV:
-            <pre class="bg-gray-100 p-2 rounded text-sm"><code>vgextend centos /dev/sdXX</code></pre>
-          </li>
-        </ol>
-      </section>
+      <ol start="2">
+        <li>Create the next available primary partition, accept the approved start and end sectors, set the new partition type to Linux LVM, and print the proposed table before writing it.</li>
+      </ol>
 
-      <!--==============  LOGICAL VOLUME  ==============-->
-      <section id="lv" class="space-y-6">
-        <h2 class="text-xl font-semibold text-sky-700 flex items-center">
-          <span class="mr-2">4.</span> Resize Logical Volume
-        </h2>
-        <ol class="list-decimal list-inside space-y-3 pl-4">
-          <li>Display current LVs:
-            <pre class="bg-gray-100 p-2 rounded text-sm"><code>lvdisplay</code></pre>
-          </li>
-          <li>Grow the root LV using all free space:
-            <pre class="bg-gray-100 p-2 rounded text-sm"><code>lvextend --extents +100%FREE /dev/centos/root</code></pre>
-          </li>
-        </ol>
-      </section>
+      <pre><code>n
+p
+&lt;next-free-partition-number&gt;
+&lt;enter for the default first sector&gt;
+&lt;enter for the default last sector&gt;
+t
+&lt;new-partition-number&gt;
+8e
+p
+w</code></pre>
 
-      <!--==============  FILESYSTEM  ==============-->
-      <section id="fs" class="space-y-6">
-        <h2 class="text-xl font-semibold text-sky-700 flex items-center">
-          <span class="mr-2">5.</span> Grow Filesystem
-        </h2>
-        <ol class="list-decimal list-inside space-y-3 pl-4">
-          <li>Expand XFS online:
-            <pre class="bg-gray-100 p-2 rounded text-sm"><code>xfs_growfs /dev/centos/root</code></pre>
-          </li>
-          <li>Verify:
-            <pre class="bg-gray-100 p-2 rounded text-sm"><code>df -h /</code></pre>
-          </li>
-        </ol>
-      </section>
+      <ol start="3">
+        <li>Ask the kernel to reread the partition table, then confirm that the new partition appears at the expected size.</li>
+      </ol>
 
-      <!--==============  CONFIRMATION  ==============-->
-      <section id="confirmation" class="space-y-6">
-        <h2 class="text-xl font-semibold text-sky-700 flex items-center">
-          <span class="mr-2">6.</span> Confirmation
-        </h2>
-        <ol class="list-decimal list-inside space-y-2 pl-4">
-          <li>Log in to RapidIdentity and confirm normal operation.</li>
-          <li>Tail <code>/var/log/messages</code> for any LVM or XFS warnings.</li>
-          <li>Schedule a reboot during a maintenance window and re‑run <code>df -h</code> to verify the size persists.</li>
-        </ol>
-      </section>
+      <pre><code>partprobe /dev/sdX
+lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT</code></pre>
 
-      <!--==============  TROUBLESHOOTING  ==============-->
-      <section id="troubleshooting" class="space-y-6 pb-16">
-        <h2 class="text-xl font-semibold text-sky-700 flex items-center">
-          <span class="mr-2">7.</span> Troubleshooting & Quick Commands
-        </h2>
-        <div class="grid md:grid-cols-2 gap-8">
-          <!-- Common Issues -->
-          <div>
-            <h3 class="font-semibold mb-2">Common Issues</h3>
-            <ul class="list-disc list-inside space-y-2 text-sm">
-              <li><strong>Hypervisor resized but OS does not see it</strong> - run <code>echo 1 > /sys/class/block/sdX/device/rescan</code> or reboot.</li>
-              <li><strong>fdisk says "No free sectors available"</strong> - resize not detected (see rescan).</li>
-              <li><strong>pvcreate fails</strong> - make sure the new partition type is <code>8e</code>.</li>
-              <li><strong>lvextend: No free extents</strong> - confirm <code>vgextend</code> completed.</li>
-              <li><strong>xfs_growfs cannot enlarge</strong> - LV did not grow correctly.</li>
-            </ul>
-          </div>
-          <!-- Cheat Sheet Commands -->
-          <div>
-            <h3 class="font-semibold mb-2">Cheat‑Sheet Commands</h3>
-            <pre class="bg-gray-100 p-3 rounded text-sm whitespace-pre-wrap"><code># Verify appliance and space
-ifconfig | grep inet
-df -h
-lsblk
+      <p>If the partition does not appear, has the wrong size, or shows an unexpected filesystem or mount, stop before running <code>pvcreate</code>. A maintenance reboot may be required before Linux can use the new partition.</p>
+    </div>
 
-# Rescan after hypervisor resize
-echo 1 > /sys/class/block/sda/device/rescan
+    <div class="section">
+      <h2>5. Add the new partition to the volume group</h2>
 
-# Partition & LVM
-fdisk /dev/sda
-partprobe
-pvcreate /dev/sda4
-vgextend centos /dev/sda4
-lvextend --extents +100%FREE /dev/centos/root
-xfs_growfs /dev/centos/root
+      <ol>
+        <li>Create an LVM physical volume on the new partition only, then verify it. Replace <code>/dev/sdXN</code> with the actual partition path.</li>
+      </ol>
 
-# Check results
-df -h</code></pre>
-          </div>
-        </div>
-      </section>
-    </main>
+      <pre><code>pvcreate /dev/sdXN
+pvs</code></pre>
 
-    <!--==============  FOOTER  ==============-->
-    <footer class="bg-sky-700 text-white text-sm py-4">
-      <div class="max-w-7xl mx-auto px-4 text-center">
-        RapidIdentity Disk Expansion Guide
+      <ol start="2">
+        <li>Add that physical volume to the volume group that contains the root logical volume.</li>
+      </ol>
+
+      <pre><code>vgextend &lt;vg-name&gt; /dev/sdXN
+vgs</code></pre>
+
+      <p>Continue only when <code>vgs</code> shows the expected additional free space in the root volume group.</p>
+    </div>
+
+    <div class="section">
+      <h2>6. Extend the root logical volume</h2>
+
+      <ol>
+        <li>Confirm the root logical-volume path again before extending it.</li>
+      </ol>
+
+      <pre><code>lvs -o lv_path,vg_name,lv_name,lv_size
+findmnt -no SOURCE /</code></pre>
+
+      <ol start="2">
+        <li>Extend the root logical volume by the approved amount.</li>
+      </ol>
+
+      <pre><code>lvextend --size +&lt;approved-size&gt; /dev/&lt;vg-name&gt;/&lt;root-lv-name&gt;</code></pre>
+
+      <p>If the approved plan is to assign every free extent in the volume group to the root logical volume, use:</p>
+
+      <pre><code>lvextend --extents +100%FREE /dev/&lt;vg-name&gt;/&lt;root-lv-name&gt;</code></pre>
+
+      <div class="note">
+        Use <code>+100%FREE</code> only when consuming all free volume-group space is the approved result. Reserve free extents when another logical volume or future change needs them.
       </div>
-    </footer>
-  </body>
+
+      <ol start="3">
+        <li>Confirm that the logical volume grew and that the volume group's remaining free space matches the plan.</li>
+      </ol>
+
+      <pre><code>lvs
+vgs</code></pre>
+    </div>
+
+    <div class="section">
+      <h2>7. Grow the XFS filesystem</h2>
+
+      <ol>
+        <li>Reconfirm that <code>/</code> is the intended mount and that its filesystem type is <code>xfs</code>.</li>
+      </ol>
+
+      <pre><code>findmnt -no SOURCE,FSTYPE /</code></pre>
+
+      <ol start="2">
+        <li>Grow the mounted XFS filesystem, then verify the new usable size.</li>
+      </ol>
+
+      <pre><code>xfs_growfs /
+df -h /</code></pre>
+
+      <p>Pass the mounted filesystem path to <code>xfs_growfs</code>. If the filesystem is ext4 or another type, do not run this command; use the approved procedure for that filesystem.</p>
+    </div>
+
+    <div class="section">
+      <h2>8. Restore service and validate the appliance</h2>
+
+      <ol>
+        <li>Capture the final storage state and review the system log for disk, LVM, or XFS warnings.</li>
+      </ol>
+
+      <pre><code>df -h /
+lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT
+pvs
+vgs
+lvs
+tail -n 200 /var/log/messages</code></pre>
+
+      <ol start="2">
+        <li>If PostgreSQL stopped because the appliance was full, start or restart it through the appliance's Local Database menu. Do not use install or uninstall as a service-recovery action.</li>
+        <li>Start or validate RapidIdentity and confirm that the expected UI is available.</li>
+        <li>For a multi-appliance environment that was stopped, bring the database node up before the non-database nodes, following the environment's approved startup order.</li>
+        <li>Confirm login, database connectivity, jobs, and the appliance role's normal functions.</li>
+        <li>Do not reboot only to prove that the LVM and XFS changes persist. If the approved change plan requires a reboot for another reason, repeat <code>df -h /</code>, <code>lsblk</code>, <code>vgs</code>, and <code>lvs</code> afterward.</li>
+        <li>Attach the before-and-after outputs and the exact disk, partition, PV, VG, LV, and filesystem commands to the change or support record.</li>
+      </ol>
+    </div>
+
+    <div class="section">
+      <h2>9. Prevent the filesystem from filling again</h2>
+
+      <ol>
+        <li>Identify the source of the growth instead of treating expansion as the complete fix.</li>
+        <li>If database backups consumed the space, review the daily cleanup job, failed backup artifacts, and the approved retention period. Do not assume that creating scheduled backups also removes old archives.</li>
+        <li>If RapidIdentity or Connect logs consumed the space, confirm log rotation and check whether debug or trace logging was left enabled.</li>
+        <li>If database or audit data consumed the space, use the product-supported retention or cleanup path. Do not truncate tables as routine disk recovery.</li>
+        <li>Review <strong>Security &gt; Retention Policies</strong>. Change an <strong>Always Retain</strong> setting only when the data does not require long-term preservation and the customer, security, audit, and legal boundaries allow the change.</li>
+        <li>Monitor the filesystem and the next scheduled backup or retention cycle after recovery. If usage rises quickly, stop and investigate the continuing source before adding more capacity.</li>
+      </ol>
+    </div>
+
+    <div class="section">
+      <h2>When to stop</h2>
+
+      <ul>
+        <li>The disk shown by Linux does not match the infrastructure change.</li>
+        <li>The partition table is GPT, full, damaged, or different from the expected layout.</li>
+        <li>The proposed partition overlaps existing storage or the target partition is already in use.</li>
+        <li>The root filesystem is not on LVM or is not XFS.</li>
+        <li>The volume group or root logical volume cannot be identified unambiguously.</li>
+        <li>Any command reports an unexpected device, size, filesystem, or allocation.</li>
+      </ul>
+    </div>
+  </div>
+</body>
 </html>
